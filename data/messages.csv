@@ -1,0 +1,6 @@
+text,label
+"Hey, please share your OTP immediately","fraud"
+"Click this link http://bank-login.xyz to secure your account","fraud"
+"Your account balance is Rs. 2000","suspicious"
+"Let's meet tomorrow at 5pm","safe"
+"Your payment has been processed successfully","safe"
