@@ -3,3 +3,7 @@ uvicorn
 scikit-learn
 pandas
 joblib
+
+username - kumariashish96_db_user
+password -k7UuvpN2x45kYP4y
+db string - mongodb+srv://<db_username>:<db_password>@cluster0.gtgvd7j.mongodb.net/
