@@ -24,6 +24,7 @@ app = FastAPI(title="Fraud Detector Backend with Auth")
 client = MongoClient(MONGO_URL)
 db = client["fraudDB"]
 users_collection = db["users"]
+messages_collection = db["messages"]
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -100,39 +101,8 @@ def health():
 model = joblib.load("fraud_model.pkl")
 vectorizer = joblib.load("vectorizer.pkl")
 
-# @app.post("/analyze")
-# def analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)):
-#     text = req.text.strip()
-#     if not text:
-#         raise HTTPException(status_code=400, detail="Text is required")
-
-#     # Transform text and predict
-#     X = vectorizer.transform([text])
-#     prediction = model.predict(X)[0]
-
-#     if prediction == "ham":
-#         status = "safe"
-#         risk_score = 10
-#         reasons = []
-#         confidence = float(model.predict_proba(X)[0][model.classes_.tolist().index("ham")])
-#     else:
-#         status = "fraud_detected"
-#         risk_score = 90
-#         reasons = ["ML model flagged as spam/fraud"]
-#         confidence = float(model.predict_proba(X)[0][model.classes_.tolist().index("spam")])
-
-#     return {
-#         "status": status,
-#         "risk_score": risk_score,
-#         "confidence": round(confidence, 2),
-#         "reasons": reasons,
-#         "prediction": prediction,
-#         "analyzed_by": user["username"]
-#     }
-
-
 @app.post("/analyze")
-def analyze(req: AnalyzeRequest):  # removed: user: dict = Depends(get_current_user)
+def analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)):
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
@@ -152,10 +122,29 @@ def analyze(req: AnalyzeRequest):  # removed: user: dict = Depends(get_current_u
         reasons = ["ML model flagged as spam/fraud"]
         confidence = float(model.predict_proba(X)[0][model.classes_.tolist().index("spam")])
 
+    # Save message in DB with user_id from auth token
+    save_message_to_db(str(user["_id"]), text, prediction, status, risk_score, confidence, reasons)
+
     return {
         "status": status,
         "risk_score": risk_score,
         "confidence": round(confidence, 2),
         "reasons": reasons,
-        "prediction": prediction
+        "prediction": prediction,
+        "analyzed_by": user["username"]
     }
+
+# --- HELPER FUNCTION ---
+def save_message_to_db(user_id: str, text: str, prediction: str, status: str, risk_score: int, confidence: float, reasons: list):
+    """Save analyzed message to MongoDB messages collection."""
+    message_doc = {
+        "user_id": user_id,
+        "text": text,
+        "prediction": prediction,
+        "status": status,
+        "risk_score": risk_score,
+        "confidence": round(confidence, 2),
+        "reasons": reasons,
+        "timestamp": datetime.utcnow()
+    }
+    messages_collection.insert_one(message_doc)
