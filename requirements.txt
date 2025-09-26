@@ -1,5 +1,8 @@
 fastapi
 uvicorn
-scikit-learn
-pandas
+pymongo
 joblib
+scikit-learn
+python-dotenv
+bcrypt
+python-jose
