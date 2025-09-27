@@ -1,7 +1,7 @@
 import os
 import joblib
 import bcrypt
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Path
 from pydantic import BaseModel
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -119,11 +119,16 @@ def analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)):
     else:
         status = "fraud_detected"
         risk_score = 90
-        reasons = ["ML model flagged as spam/fraud"]
+        # reasons = ["ML model flagged as spam/fraud"]
         confidence = float(model.predict_proba(X)[0][model.classes_.tolist().index("spam")])
+        keywords = extract_keywords(text, vectorizer, model)
+        reasons = [f"Suspicious keywords found: {', '.join(keywords)}"]
+
 
     # Save message in DB with user_id from auth token
-    save_message_to_db(str(user["_id"]), text, prediction, status, risk_score, confidence, reasons)
+    new_msg_id = save_message_to_db(
+        str(user["_id"]), text, prediction, status, risk_score, confidence, reasons
+    )
 
     return {
         "status": status,
@@ -131,7 +136,8 @@ def analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)):
         "confidence": round(confidence, 2),
         "reasons": reasons,
         "prediction": prediction,
-        "analyzed_by": user["username"]
+        "analyzed_by": user["username"],
+        "message_id": new_msg_id,
     }
 
 # --- HELPER FUNCTION ---
@@ -147,4 +153,58 @@ def save_message_to_db(user_id: str, text: str, prediction: str, status: str, ri
         "reasons": reasons,
         "timestamp": datetime.utcnow()
     }
-    messages_collection.insert_one(message_doc)
+    result = messages_collection.insert_one(message_doc)
+    return str(result.inserted_id)
+
+def extract_keywords(text, vectorizer, model, top_n=3):
+    """Return top keywords from the message contributing to spam classification."""
+    feature_names = vectorizer.get_feature_names_out()
+    X = vectorizer.transform([text])
+
+    # Get indices of non-zero features
+    nonzero_indices = X.nonzero()[1]
+
+    # For spam class → usually index 1 (if classes_ = ["ham", "spam"])
+    spam_idx = list(model.classes_).index("spam")
+
+    # Collect feature weights for present words
+    word_scores = {
+        feature_names[i]: model.feature_log_prob_[spam_idx, i]
+        for i in nonzero_indices
+    }
+
+    # Sort by importance
+    sorted_words = sorted(word_scores.items(), key=lambda x: x[1], reverse=True)
+
+    return [word for word, score in sorted_words[:top_n]]
+
+@app.post("/messages/{message_id}/not_spam")
+def mark_not_spam(
+    message_id: str = Path(..., description="Message ID to mark as NOT SPAM"),
+    user: dict = Depends(get_current_user)
+):
+    # Find the message
+    message = messages_collection.find_one({"_id": ObjectId(message_id), "user_id": str(user["_id"])})
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Update message → override prediction & status
+    update_data = {
+        "prediction": "ham",
+        "status": "safe",
+        "risk_score": 0,
+        "reasons": ["User manually marked as NOT SPAM"],
+        "corrected_at": datetime.utcnow(),
+        "corrected_by": user["username"]
+    }
+
+    messages_collection.update_one(
+        {"_id": ObjectId(message_id)},
+        {"$set": update_data}
+    )
+
+    return {
+        "message": "✅ Message marked as NOT SPAM",
+        "message_id": message_id,
+        "updated_fields": update_data
+    }
